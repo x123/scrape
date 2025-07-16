@@ -1,0 +1,11 @@
+[package]
+name = "scrape"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+reqwest = { version = "0.11", features = ["json", "rustls-tls", "socks"] } # "socks" feature for SOCKS5 proxy
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] } # "full" for convenience, can be narrowed down
+env_logger = "0.10" # Uncomment if you want logging
