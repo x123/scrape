@@ -3,12 +3,14 @@ use actix_web::{web, App, HttpServer, Responder, HttpResponse};
 use serde::{Deserialize, Serialize};
 use reqwest::{Client, Proxy};
 use std::time::Duration;
+use std::env; // Import for environment variables
 
 // Define the structure for the incoming POST request
 #[derive(Deserialize)]
 struct ScrapeRequest {
     url: String,
-    // Optional SOCKS5 proxy address, e.g., "socks5://127.0.0.1:9050"
+    // Optional SOCKS5 proxy address in the request body.
+    // This will be ignored if the DEFAULT_SOCKS5_PROXY env var is set for the service.
     proxy: Option<String>,
     // Optional timeout in seconds for the request
     timeout_seconds: Option<u64>,
@@ -25,20 +27,28 @@ struct ScrapeResponse {
 
 /// Handles the POST request to scrape a URL.
 ///
-/// This function takes a `ScrapeRequest` as input, constructs an HTTP client,
-/// optionally configures it with a SOCKS5 proxy, and then performs a GET request
-/// to the specified URL. It returns the scraped content or an error message.
+/// This function takes a `ScrapeRequest` as input, constructs an HTTP client.
+/// It prioritizes a SOCKS5 proxy address from the `DEFAULT_SOCKS5_PROXY`
+/// environment variable. If that's not set, it falls back to the 'proxy' field
+/// in the request body. If neither is set, no proxy is used.
+/// It then performs a GET request to the specified URL and returns the scraped
+/// content or an error message.
 async fn scrape_handler(req: web::Json<ScrapeRequest>) -> impl Responder {
-    // Create a new HTTP client
+    // Create a new HTTP client builder
     let mut client_builder = Client::builder();
 
     // Set a default timeout if none is provided, or use the user-specified one
     let timeout = req.timeout_seconds.unwrap_or(30); // Default to 30 seconds
     client_builder = client_builder.timeout(Duration::from_secs(timeout));
 
-    // Configure the client with a SOCKS5 proxy if provided
-    if let Some(proxy_addr) = &req.proxy {
-        match Proxy::all(proxy_addr) {
+    // Determine the proxy address to use:
+    // 1. Check for DEFAULT_SOCKS5_PROXY environment variable (highest precedence).
+    //    This is how Kubernetes will inject the specific Tor proxy for each service.
+    // 2. Fallback to 'proxy' field in the request body (if no default env var is set).
+    let proxy_to_use = env::var("DEFAULT_SOCKS5_PROXY").ok().or_else(|| req.proxy.clone());
+
+    if let Some(proxy_addr) = proxy_to_use {
+        match Proxy::all(&proxy_addr) {
             Ok(proxy) => {
                 client_builder = client_builder.proxy(proxy);
                 println!("Using proxy: {}", proxy_addr); // Log proxy usage
@@ -52,6 +62,8 @@ async fn scrape_handler(req: web::Json<ScrapeRequest>) -> impl Responder {
                 });
             }
         }
+    } else {
+        println!("No proxy configured for this request.");
     }
 
     // Build the HTTP client
@@ -118,7 +130,7 @@ async fn main() -> std::io::Result<()> {
     // Define the address and port to bind to
     // This makes it accessible from outside the container in a Kubernetes environment
     let host = "0.0.0.0";
-    let port = 8282;
+    let port = 8282; // Consistent with the Containerfile
 
     println!("Starting server on http://{}:{}", host, port);
 
